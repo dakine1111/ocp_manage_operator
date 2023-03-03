@@ -1,0 +1,15 @@
+---
+- name: Wait for subscription
+  kubernetes.core.k8s_info:
+    api_version: operators.coreos.com/v1alpha1
+    kind: Subscription
+    name: "{{ ocp_manage_operator_name }}"
+    namespace: "{{ ocp_manage_operator_namespace }}"
+  register: output_info
+  until: >-
+    output_info.resources | json_query('[*].status.conditions[?reason==`AllCatalogSourcesHealthy`][].status')
+    | select ('match','False') | list | length == 1
+  retries: 15
+  when:
+    - ocp_manage_operator_plan == 'Manual'
+    - ocp_manage_operator_state != 'absent'
