@@ -137,3 +137,7 @@
   register: subscription_uninstall
   changed_when: subscription_uninstall.rc == 0
   when: ocp_manage_operator_state == 'absent'
+
+- name: Set fact to empty
+  ansible.builtin.set_fact:
+    ocp_manage_operator_starting_csv: ''
