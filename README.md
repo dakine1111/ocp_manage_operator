@@ -23,7 +23,7 @@ Example Playbook
     ocp_manage_operator_channel: stable
     ocp_manage_operator_source: redhat-operators
     ocp_manage_operator_source_namespace: openshift-marketplace
-    ocp_manage_operator_targetNamespaces: true
+    ocp_manage_operator_target_namespaces: true
     ocp_manage_operator_deployment_name: rhsso-operator
     ocp_manage_operator_create_namespace: true
   roles:
