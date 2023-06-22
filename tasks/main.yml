@@ -71,6 +71,9 @@
       {% if ocp_manage_operator_starting_csv | length > 0 %}
         startingCSV: {{ ocp_manage_operator_starting_csv }}
       {% endif  %}
+      {% if ocp_manage_operator_subscription_extras | length > 0 %}
+        {{ ocp_manage_operator_subscription_extras | indent(2, false) }}
+      {% endif  %}
   notify:
     - Wait for subscription
   when: ocp_manage_operator_state != 'absent'
@@ -85,6 +88,9 @@
     name: "{{ ocp_manage_operator_name }}"
     namespace: "{{ ocp_manage_operator_namespace }}"
   register: subscription_info
+  until: >
+    subscription_info.resources | json_query('[*].status.installplan.kind') | unique == ["InstallPlan"]
+  retries: 15
   when:
     - ocp_manage_operator_plan == 'Manual'
     - ocp_manage_operator_state != 'absent'
@@ -107,13 +113,23 @@
       changed_when: operator_csv.rc == 0
       when: "ocp_manage_operator_starting_csv | length == 0"
 
-    - name: Get install plans
-      ansible.builtin.command: >
-        oc get -n {{ ocp_manage_operator_namespace }} installplan.operators.coreos.com
-        -ojsonpath="{range .items[*]}{.metadata.name}{' '}{range .spec.clusterServiceVersionNames[*]}{@}{'\n'}{end}{end}"
+    - name: Set fact ocp_manage_operator_starting_csv
+      ansible.builtin.set_fact:
+        ocp_manage_operator_starting_csv: "{{ operator_csv.stdout }}"
+      when: "ocp_manage_operator_starting_csv | length == 0"
+
+    - name: Get install plans # noqa var-spacing
+      ansible.builtin.shell:
+        cmd: |
+          set -o pipefail
+          oc get -n {{ ocp_manage_operator_namespace }} installplan.operators.coreos.com --template="{% raw %}
+          {{ range \$item := .items }}{{ range \$item.spec.clusterServiceVersionNames }}
+          {{ if eq . \"{% endraw %}{{ ocp_manage_operator_starting_csv }}{% raw %}\"}}
+          {{ printf \"%s\\n\" \$item.metadata.name }}{{end}}{{end}}{{end}}{% endraw %}"
+        executable: /usr/bin/bash
       register: operator_install_plans
       changed_when: operator_install_plans.rc == 0
-      until: "operator_install_plans.stdout_lines | length > 0"
+      until: "operator_install_plans.stdout_lines | map('trim') | select() | list | length > 0"
       retries: 5
       when: ocp_manage_operator_pending_approval
 
@@ -124,12 +140,12 @@
           apiVersion: operators.coreos.com/v1alpha1
           kind: installplan
           metadata:
-            name: "{{ item | split(' ') | first }}"
+            name: "{{ item }}"
             namespace: "{{ ocp_manage_operator_namespace }}"
           spec:
             approved: true
       with_items:
-        - "{{ operator_install_plans.stdout_lines }}"
+        - "{{ operator_install_plans.stdout_lines | map('trim') | select() | list }}"
       when: ocp_manage_operator_pending_approval
 
 - name: Wait for operator deployment
@@ -185,3 +201,4 @@
 - name: Set fact to empty
   ansible.builtin.set_fact:
     ocp_manage_operator_starting_csv: ''
+    ocp_manage_operator_subscription_extras: ''
