@@ -126,7 +126,7 @@
           {{ range \$item := .items }}{{ range \$item.spec.clusterServiceVersionNames }}
           {{ if eq . \"{% endraw %}{{ ocp_manage_operator_starting_csv }}{% raw %}\"}}
           {{ printf \"%s\\n\" \$item.metadata.name }}{{end}}{{end}}{{end}}{% endraw %}"
-        executable: /usr/bin/bash
+        executable: /bin/bash
       register: operator_install_plans
       changed_when: operator_install_plans.rc == 0
       until: "operator_install_plans.stdout_lines | map('trim') | select() | list | length > 0"
