@@ -20,11 +20,14 @@
 
 - name: Create project {{ ocp_manage_operator_namespace }}
   kubernetes.core.k8s:
-    definition:
+    definition: |
       apiVersion: project.openshift.io/v1
       kind: Project
       metadata:
         name: "{{ ocp_manage_operator_namespace }}"
+      {% if ocp_manage_operator_project_metadata_extras | length > 0 %}
+        {{ ocp_manage_operator_project_metadata_extras | indent(2, false) }}
+      {% endif  %}
     state: present
   when:
     - ocp_manage_operator_state != 'absent'
