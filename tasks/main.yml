@@ -116,10 +116,9 @@
       changed_when: operator_csv.rc == 0
       when: "ocp_manage_operator_starting_csv | length == 0"
 
-    - name: Set fact ocp_manage_operator_starting_csv
+    - name: Set fact ocp_manage_operator_starting_csv_search
       ansible.builtin.set_fact:
-        ocp_manage_operator_starting_csv: "{{ operator_csv.stdout }}"
-      when: "ocp_manage_operator_starting_csv | length == 0"
+        ocp_manage_operator_starting_csv_search: "{{ operator_csv.stdout if (ocp_manage_operator_starting_csv | length == 0) else ocp_manage_operator_starting_csv }}"
 
     - name: Get install plans # noqa var-spacing
       ansible.builtin.shell:
@@ -127,7 +126,7 @@
           set -o pipefail
           oc get -n {{ ocp_manage_operator_namespace }} installplan.operators.coreos.com --template="{% raw %}
           {{ range \$item := .items }}{{ range \$item.spec.clusterServiceVersionNames }}
-          {{ if eq . \"{% endraw %}{{ ocp_manage_operator_starting_csv }}{% raw %}\"}}
+          {{ if eq . \"{% endraw %}{{ ocp_manage_operator_starting_csv_search }}{% raw %}\"}}
           {{ printf \"%s\\n\" \$item.metadata.name }}{{end}}{{end}}{{end}}{% endraw %}"
         executable: /bin/bash
       register: operator_install_plans
@@ -172,9 +171,10 @@
   when:
     - "ocp_manage_operator_state != 'absent'"
     - "ocp_manage_operator_deployment_name | length == 0"
+    - "ocp_manage_operator_deployment_label | length > 0"
   ansible.builtin.command:
     cmd: >
-      oc get Deployment -n "{{ ocp_manage_operator_namespace }}" -l"{{ ocp_manage_operator_deployment_label }}"
+      oc get Deployment -n "{{ ocp_manage_operator_namespace }}" -l "{{ ocp_manage_operator_deployment_label }}"
       -ojsonpath="{range .items[*].status.conditions[?(.reason=='MinimumReplicasAvailable')]}{.status}{end}"
   register: output_info
   changed_when: "output_info.rc == 0"
@@ -204,4 +204,5 @@
 - name: Set fact to empty
   ansible.builtin.set_fact:
     ocp_manage_operator_starting_csv: ''
+    ocp_manage_operator_starting_csv_search: ''
     ocp_manage_operator_subscription_extras: ''
