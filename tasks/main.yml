@@ -77,12 +77,24 @@
       {% if ocp_manage_operator_subscription_extras | length > 0 %}
         {{ ocp_manage_operator_subscription_extras | indent(2, false) }}
       {% endif  %}
-  notify:
-    - Wait for subscription
+  register: subscription_out
   when: ocp_manage_operator_state != 'absent'
 
-- name: Flush handlers
-  ansible.builtin.meta: flush_handlers
+- name: Wait for subscription
+  kubernetes.core.k8s_info:
+    api_version: operators.coreos.com/v1alpha1
+    kind: Subscription
+    name: "{{ ocp_manage_operator_name }}"
+    namespace: "{{ ocp_manage_operator_namespace }}"
+  register: output_info
+  until: >-
+    output_info.resources | json_query('[*].status.conditions[?reason==`AllCatalogSourcesHealthy`][].status')
+    | select ('match','False') | list | length == 1
+  retries: 15
+  when:
+    - ocp_manage_operator_plan == 'Manual'
+    - ocp_manage_operator_state != 'absent'
+    - subscription_out.changed
 
 - name: Check for pending approval
   kubernetes.core.k8s_info:
