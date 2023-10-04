@@ -1,6 +1,6 @@
 ---
 
-- name: ocp_manager_operator | debug {{ ocp_manage_operator_name }}
+- name: Debug {{ ocp_manage_operator_name }}
   ansible.builtin.debug:
     verbosity: 2
     msg: |
@@ -130,9 +130,10 @@
 
     - name: Set fact ocp_manage_operator_starting_csv_search
       ansible.builtin.set_fact:
-        ocp_manage_operator_starting_csv_search: "{{ operator_csv.stdout if (ocp_manage_operator_starting_csv | length == 0) else ocp_manage_operator_starting_csv }}"
+        ocp_manage_operator_starting_csv_search: >-
+          "{{ operator_csv.stdout if (ocp_manage_operator_starting_csv | length == 0) else ocp_manage_operator_starting_csv }}"
 
-    - name: Get install plans # noqa var-spacing
+    - name: Get install plans # noqa jinja[spacing]
       ansible.builtin.shell:
         cmd: |
           set -o pipefail
