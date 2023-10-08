@@ -8,6 +8,6 @@ plugins:
   - ["@saithodev/semantic-release-gitea", {
     "giteaUrl": 'https://gitea.degert-it.de',
     "assets": [
-    {"path": "CHANGELOG.md"}
+      {"path": "CHANGELOG.md"}
     ]
   }]
