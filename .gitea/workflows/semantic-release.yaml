@@ -1,0 +1,45 @@
+name: semantic-release
+on: # noqa yaml[truthy]
+  push:
+    branches:
+      - dev
+jobs:
+  ansible_lint:
+    name: Ansible Lint
+    runs-on: ubuntu-latest
+    container:
+      image: ansible-lint-runner:1.1
+    steps:
+      - uses: actions/checkout@v4
+      - name: Run ansible-lint
+        run: ansible-lint -v
+  release:
+    name: release
+    runs-on: ubuntu-latest
+    needs: ansible_lint
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+      - name: Semantic Release
+        uses: cycjimmy/semantic-release-action@v4
+        with:
+          extra_plugins: |
+            @saithodev/semantic-release-gitea
+          branches: |
+            [
+              '+([0-9])?(.{+([0-9]),x}).x',
+              'master',
+              'next',
+              'next-major',
+              'dev',
+              {
+                name: 'beta',
+                prerelease: true
+              },
+              {
+                name: 'alpha',
+                prerelease: true
+              }
+            ]
+        env:
+          GITEA_TOKEN: ${{ secrets.GITEA_TOKEN }}
