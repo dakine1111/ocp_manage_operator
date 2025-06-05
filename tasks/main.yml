@@ -1,5 +1,4 @@
 ---
-
 - name: Debug {{ ocp_manage_operator_name }}
   ansible.builtin.debug:
     verbosity: 2
