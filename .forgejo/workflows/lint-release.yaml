@@ -5,7 +5,7 @@ jobs:
     name: Ansible Lint
     runs-on: ubuntu-latest
     container:
-      image: ansible-lint-runner:1.1
+      image: gitea.degert-it.de/container/ansible-lint-runner:latest
     steps:
       - uses: actions/checkout@v4
       - name: Run ansible-lint

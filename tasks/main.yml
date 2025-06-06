@@ -10,6 +10,7 @@
       ocp_manage_operator_deployment_name: {{ ocp_manage_operator_deployment_name }}
       ocp_manage_operator_name: {{ ocp_manage_operator_name }}
       ocp_manage_operator_namespace: {{ ocp_manage_operator_namespace }}
+      ocp_manage_operator_group_name: {{ ocp_manage_operator_group_name }}
       ocp_manage_operator_plan: {{ ocp_manage_operator_plan }}
       ocp_manage_operator_source: {{ ocp_manage_operator_source }}
       ocp_manage_operator_source_namespace: {{ ocp_manage_operator_source_namespace }}
@@ -32,27 +33,34 @@
     - ocp_manage_operator_state != 'absent'
     - ocp_manage_operator_create_namespace | bool
 
-- name: Check if operator group exists in {{ ocp_manage_operator_namespace }}
-  ansible.builtin.shell: oc get OperatorGroup -n "{{ ocp_manage_operator_namespace }}" | grep -q NAME
-  register: command_result_og
-  changed_when: command_result_og.rc != 0
+- name: Check if OperatorGroup exists in {{ ocp_manage_operator_namespace }}
+  kubernetes.core.k8s_info:
+    api_version: operators.coreos.com/v1
+    kind: OperatorGroup
+    namespace: "{{ ocp_manage_operator_namespace }}"
+  register: operatorgroup_info
   ignore_errors: true
 
-- name: Create operator group in {{ ocp_manage_operator_namespace }}
+- name: Set fact if OperatorGroup exists
+  ansible.builtin.set_fact:
+    operatorgroup_exists: "{{ operatorgroup_info.resources | length > 0 }}"
+
+- name: Create OperatorGroup if it does not exist
   kubernetes.core.k8s:
+    state: present
     definition: |
       apiVersion: operators.coreos.com/v1
       kind: OperatorGroup
       metadata:
-        name: {{ ocp_manage_operator_name }}
+        name: "{{ ocp_manage_operator_group_name }}"
         namespace: "{{ ocp_manage_operator_namespace }}"
       {% if ocp_manage_operator_target_namespaces | bool %}
       spec:
         targetNamespaces:
-        - {{ ocp_manage_operator_namespace }}
+          - "{{ ocp_manage_operator_namespace }}"
       {% endif  %}
   when:
-    - command_result_og.rc == 1
+    - not operatorgroup_exists
     - ocp_manage_operator_state != 'absent'
 
 - name: Set operator subscription to state {{ ocp_manage_operator_state }}
@@ -62,7 +70,7 @@
       apiVersion: operators.coreos.com/v1alpha1
       kind: Subscription
       metadata:
-        name: {{ ocp_manage_operator_name }}
+        name: "{{ ocp_manage_operator_name }}"
         namespace: "{{ ocp_manage_operator_namespace }}"
       spec:
         channel: {{ ocp_manage_operator_channel }}
@@ -89,7 +97,8 @@
   until: >-
     output_info.resources | json_query('[*].status.conditions[?reason==`AllCatalogSourcesHealthy`][].status')
     | select ('match','False') | list | length == 1
-  retries: 15
+  delay: 10
+  retries: 60
   when:
     - ocp_manage_operator_plan == 'Manual'
     - ocp_manage_operator_state != 'absent'
@@ -104,47 +113,67 @@
   register: subscription_info
   until: >
     subscription_info.resources | json_query('[*].status.installplan.kind') | unique == ["InstallPlan"]
-  retries: 15
+  delay: 10
+  retries: 60
   when:
     - ocp_manage_operator_plan == 'Manual'
     - ocp_manage_operator_state != 'absent'
 
 - name: Wait for install plan and approve install plan
   vars:
-    ocp_manage_operator_pending_approval: "{{ subscription_info.resources | json_query('[*].status.conditions[?reason==`RequiresApproval`][].status')
-      | select ('match', 'True') | join() | bool }}"
+    ocp_manage_operator_pending_approval: >-
+      {{ subscription_info.resources | json_query('[*].status.conditions[?reason==`RequiresApproval`][].status')
+      | select('match', 'True') | join() | bool }}
   when:
     - ocp_manage_operator_approve | bool
     - ocp_manage_operator_plan == 'Manual'
     - ocp_manage_operator_state != 'absent'
   block:
-    - name: Get current operator currentcsv in {{ ocp_manage_operator_namespace }}
-      ansible.builtin.command: |-
-        oc -n {{ ocp_manage_operator_namespace }} get subscription.operators.coreos.com/{{ ocp_manage_operator_name }} -o jsonpath='{ .status.currentCSV }'
-      register: operator_csv
-      until: operator_csv.stdout != ''
+
+    - name: Get current operator currentCSV in {{ ocp_manage_operator_namespace }}
+      kubernetes.core.k8s_info:
+        api_version: operators.coreos.com/v1alpha1
+        kind: Subscription
+        name: "{{ ocp_manage_operator_name }}"
+        namespace: "{{ ocp_manage_operator_namespace }}"
+      register: subscription_info
+      until: "subscription_info.resources[0].status.currentCSV is defined and subscription_info.resources[0].status.currentCSV | length > 0"
       retries: 15
-      changed_when: operator_csv.rc == 0
-      when: "ocp_manage_operator_starting_csv | length == 0"
+      delay: 10
+      when: ocp_manage_operator_starting_csv | length == 0
 
     - name: Set fact ocp_manage_operator_starting_csv_search
       ansible.builtin.set_fact:
         ocp_manage_operator_starting_csv_search: >-
-          "{{ operator_csv.stdout if (ocp_manage_operator_starting_csv | length == 0) else ocp_manage_operator_starting_csv }}"
+          {{ subscription_info.resources[0].status.currentCSV
+               if (ocp_manage_operator_starting_csv | length == 0)
+               else ocp_manage_operator_starting_csv }}
 
-    - name: Get install plans # noqa jinja[spacing]
-      ansible.builtin.shell:
-        cmd: |
-          set -o pipefail
-          oc get -n {{ ocp_manage_operator_namespace }} installplan.operators.coreos.com --template="{% raw %}
-          {{ range \$item := .items }}{{ range \$item.spec.clusterServiceVersionNames }}
-          {{ if eq . \"{% endraw %}{{ ocp_manage_operator_starting_csv_search }}{% raw %}\"}}
-          {{ printf \"%s\\n\" \$item.metadata.name }}{{end}}{{end}}{{end}}{% endraw %}"
-        executable: /bin/bash
-      register: operator_install_plans
-      changed_when: operator_install_plans.rc == 0
-      until: "operator_install_plans.stdout_lines | map('trim') | select() | list | length > 0"
-      retries: 5
+    - name: Wait for install plan with correct CSV in {{ ocp_manage_operator_namespace }}
+      kubernetes.core.k8s_info:
+        api_version: operators.coreos.com/v1alpha1
+        kind: InstallPlan
+        namespace: "{{ ocp_manage_operator_namespace }}"
+      register: installplans_info
+      until: >
+        installplans_info.resources
+        | selectattr('spec', 'defined')
+        | selectattr('spec.clusterServiceVersionNames', 'defined')
+        | selectattr('spec.clusterServiceVersionNames', 'contains', ocp_manage_operator_starting_csv_search)
+        | list
+        | length > 0
+      retries: 10
+      delay: 6
+      when: ocp_manage_operator_pending_approval
+
+    - name: Set matched install plans
+      ansible.builtin.set_fact:
+        matching_installplans: >-
+          {{ installplans_info.resources
+             | selectattr('spec', 'defined')
+             | selectattr('spec.clusterServiceVersionNames', 'defined')
+             | selectattr('spec.clusterServiceVersionNames', 'contains', ocp_manage_operator_starting_csv_search)
+             | list }}
       when: ocp_manage_operator_pending_approval
 
     - name: Approve installation
@@ -152,15 +181,15 @@
         merge_type: merge
         definition:
           apiVersion: operators.coreos.com/v1alpha1
-          kind: installplan
+          kind: InstallPlan
           metadata:
-            name: "{{ item }}"
+            name: "{{ item.metadata.name }}"
             namespace: "{{ ocp_manage_operator_namespace }}"
           spec:
             approved: true
-      with_items:
-        - "{{ operator_install_plans.stdout_lines | map('trim') | select() | list }}"
+      loop: "{{ matching_installplans }}"
       when: ocp_manage_operator_pending_approval
+      no_log: true
 
 - name: Wait for operator deployment
   when:
@@ -177,41 +206,69 @@
   until: >
     output_info.resources | json_query('[*].status.conditions[?reason==`MinimumReplicasAvailable`][].status') |
     select ('match','True') | list | length == 1
-  retries: 15
+  delay: 10
+  retries: 60
 
 - name: Wait for operator deployment per label
   when:
-    - "ocp_manage_operator_state != 'absent'"
-    - "ocp_manage_operator_deployment_name | length == 0"
-    - "ocp_manage_operator_deployment_label | length > 0"
-  ansible.builtin.command:
-    cmd: >
-      oc get Deployment -n "{{ ocp_manage_operator_namespace }}" -l "{{ ocp_manage_operator_deployment_label }}"
-      -ojsonpath="{range .items[*].status.conditions[?(.reason=='MinimumReplicasAvailable')]}{.status}{end}"
-  register: output_info
-  changed_when: "output_info.rc == 0"
-  until: "output_info.stdout == 'True'"
+    - ocp_manage_operator_state != 'absent'
+    - ocp_manage_operator_deployment_name | length == 0
+    - ocp_manage_operator_deployment_label | length > 0
+  kubernetes.core.k8s_info:
+    api_version: apps/v1
+    kind: Deployment
+    namespace: "{{ ocp_manage_operator_namespace }}"
+    label_selectors:
+      - "{{ ocp_manage_operator_deployment_label }}"
+  register: deployment_info
+  until: >
+    deployment_info.resources
+    | selectattr('status.conditions', 'defined')
+    | selectattr('status.conditions', 'selectattr', 'reason', 'equalto', 'MinimumReplicasAvailable')
+    | map(attribute='status.conditions')
+    | map('selectattr', 'reason', 'equalto', 'MinimumReplicasAvailable')
+    | map('first')
+    | map(attribute='status')
+    | list
+    | first == 'True'
   retries: 15
   delay: 30
 
 - name: Get current operator installedCSV in {{ ocp_manage_operator_namespace }}
-  ansible.builtin.shell: "oc -n {{ ocp_manage_operator_namespace }} get subscription.operators.coreos.com/{{ ocp_manage_operator_name }}
-    -o jsonpath='{ .status.installedCSV }'"
-  register: operator_csv
-  changed_when: operator_csv.rc != 0
   when: ocp_manage_operator_state == 'absent'
+  kubernetes.core.k8s_info:
+    api_version: operators.coreos.com/v1alpha1
+    kind: Subscription
+    name: "{{ ocp_manage_operator_name }}"
+    namespace: "{{ ocp_manage_operator_namespace }}"
+  register: subscription_info
 
-- name: Delete clusterserviceversion {{ operator_csv.stdout }}
-  ansible.builtin.command: "oc delete clusterserviceversion {{ operator_csv.stdout }} -n {{ ocp_manage_operator_namespace }}"
+- name: Set installed CSV fact
+  ansible.builtin.set_fact:
+    ocp_manage_operator_installed_csv: "{{ subscription_info.resources[0].status.installedCSV }}"
+  when:
+    - ocp_manage_operator_state == 'absent'
+    - subscription_info.resources[0].status.installedCSV is defined
+
+- name: Delete ClusterServiceVersion {{ ocp_manage_operator_installed_csv }}
+  when: ocp_manage_operator_state == 'absent'
+  kubernetes.core.k8s:
+    state: absent
+    api_version: operators.coreos.com/v1alpha1
+    kind: ClusterServiceVersion
+    name: "{{ ocp_manage_operator_installed_csv }}"
+    namespace: "{{ ocp_manage_operator_namespace }}"
   register: csv_uninstall
-  changed_when: csv_uninstall.rc == 0
-  when: ocp_manage_operator_state == 'absent'
 
-- name: Delete subscription {{ ocp_manage_operator_name }}
-  ansible.builtin.command: "oc -n {{ ocp_manage_operator_namespace }} delete subscription.operators.coreos.com {{ ocp_manage_operator_name }}"
-  register: subscription_uninstall
-  changed_when: subscription_uninstall.rc == 0
+- name: Delete Subscription {{ ocp_manage_operator_name }}
   when: ocp_manage_operator_state == 'absent'
+  kubernetes.core.k8s:
+    state: absent
+    api_version: operators.coreos.com/v1alpha1
+    kind: Subscription
+    name: "{{ ocp_manage_operator_name }}"
+    namespace: "{{ ocp_manage_operator_namespace }}"
+  register: subscription_uninstall
 
 - name: Set fact to empty
   ansible.builtin.set_fact:
