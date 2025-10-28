@@ -250,7 +250,7 @@
     - ocp_manage_operator_state == 'absent'
     - subscription_info.resources[0].status.installedCSV is defined
 
-- name: Delete ClusterServiceVersion {{ ocp_manage_operator_installed_csv }}
+- name: Delete ClusterServiceVersion {{ ocp_manage_operator_installed_csv | default('') }}
   when: ocp_manage_operator_state == 'absent'
   kubernetes.core.k8s:
     state: absent
