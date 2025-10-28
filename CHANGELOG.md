@@ -1,3 +1,10 @@
+## [1.1.1](https://gitea.degert-it.de/ansible-galaxy/ocp_manage_operator/compare/v1.1.0...v1.1.1) (2025-10-28)
+
+
+### Bug Fixes
+
+* fix undefined error ([b363735](https://gitea.degert-it.de/ansible-galaxy/ocp_manage_operator/commit/b36373512beef529d7cb5d4f019a5f71f5437115))
+
 # [1.1.0](https://gitea.degert-it.de/ansible-galaxy/ocp_manage_operator/compare/v1.0.2...v1.1.0) (2025-06-06)
 
 
